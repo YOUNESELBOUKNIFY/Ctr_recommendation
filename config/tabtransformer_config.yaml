@@ -9,12 +9,12 @@ dataset_id: MicroLens_1M_x1
 # ========================
 dataset_config:
   MicroLens_1M_x1:
-    data_root: ./data/MicroLens_1M_x1/
+    data_root: ../data/MicroLens_1M_x1/
     data_format: parquet
-    train_data: ./data/MicroLens_1M_x1/train.parquet
-    valid_data: ./data/MicroLens_1M_x1/valid.parquet
-    test_data: ./data/MicroLens_1M_x1/test.parquet
-    item_info: ./data/MicroLens_1M_x1/item_info.parquet
+    train_data: ../data/MicroLens_1M_x1/train.parquet
+    valid_data: ../data/MicroLens_1M_x1/valid.parquet
+    test_data: ../data/MicroLens_1M_x1/test.parquet
+    item_info: ../data/MicroLens_1M_x1/item_info.parquet
     rebuild_dataset: False
     feature_cols:
       - {name: user_id, active: True, dtype: int, type: meta}
