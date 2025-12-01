@@ -9,7 +9,7 @@ from sklearn.metrics import roc_auc_score, log_loss
 # ========================
 # Charger config YAML
 # ========================
-with open("./config/tabtransformer_config.yaml", "r") as f:
+with open("../config/tabtransformer_config.yaml", "r") as f:
     cfg = yaml.safe_load(f)
 
 seed = cfg["base_config"]["seed"]
