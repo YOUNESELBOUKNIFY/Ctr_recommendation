@@ -83,13 +83,17 @@ for epoch in range(epochs):
     model.train()
     train_loss = 0
     for batch_dict, item_dict, mask in train_loader:
-        # Envoyer tensors sur GPU
+        # Envoyer tensors sur GPU et convertir les object
         batch_dict = {k: v.to(device) for k, v in batch_dict.items()}
-        # Corriger item_emb_d128 s'il est object
+
         for k, v in item_dict.items():
-            if v.dtype == torch.object:
-                v = torch.tensor(np.stack([np.array(x, dtype=np.float32) for x in v.cpu().numpy()]))
-            item_dict[k] = v.to(device)
+            if v.dtype in [torch.float32, torch.float64, torch.int64]:
+                item_dict[k] = v.to(device)
+            else:
+                # v est object -> convertir
+                arr = np.stack([np.array(x, dtype=np.float32) for x in v.cpu().numpy()])
+                item_dict[k] = torch.tensor(arr, dtype=torch.float).to(device)
+
         mask = mask.to(device)
 
         if "label" not in batch_dict:
@@ -114,10 +118,14 @@ for epoch in range(epochs):
     with torch.no_grad():
         for batch_dict, item_dict, mask in valid_loader:
             batch_dict = {k: v.to(device) for k, v in batch_dict.items()}
+
             for k, v in item_dict.items():
-                if v.dtype == torch.object:
-                    v = torch.tensor(np.stack([np.array(x, dtype=np.float32) for x in v.cpu().numpy()]))
-                item_dict[k] = v.to(device)
+                if v.dtype in [torch.float32, torch.float64, torch.int64]:
+                    item_dict[k] = v.to(device)
+                else:
+                    arr = np.stack([np.array(x, dtype=np.float32) for x in v.cpu().numpy()])
+                    item_dict[k] = torch.tensor(arr, dtype=torch.float).to(device)
+
             mask = mask.to(device)
 
             if "label" not in batch_dict:
