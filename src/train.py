@@ -62,7 +62,6 @@ model = build_model(feature_map, model_cfg)
 
 if multi_gpu:
     model = torch.nn.DataParallel(model)
-
 model.to(device)
 
 # Optimizer et loss
@@ -83,25 +82,31 @@ for epoch in range(epochs):
     model.train()
     train_loss = 0
     for batch_dict, item_dict, mask in train_loader:
-        # Envoyer tensors sur GPU et convertir les object
-        batch_dict = {k: v.to(device) for k, v in batch_dict.items()}
 
+        # Séparer x_cat et x_cont
+        x_cat = batch_dict.get("x_cat", None)
+        x_cont = batch_dict.get("x_cont", None)
+
+        if x_cat is not None:
+            x_cat = x_cat.to(device)
+        if x_cont is not None:
+            x_cont = x_cont.to(device)
+
+        # Envoyer item_dict sur GPU et convertir object
         for k, v in item_dict.items():
-            if v.dtype in [torch.float32, torch.float64, torch.int64]:
-                item_dict[k] = v.to(device)
-            else:
-                # v est object -> convertir
-                arr = np.stack([np.array(x, dtype=np.float32) for x in v.cpu().numpy()])
-                item_dict[k] = torch.tensor(arr, dtype=torch.float).to(device)
+            if not torch.is_tensor(v):
+                arr = np.stack([np.array(x, dtype=np.float32) for x in v])
+                v = torch.tensor(arr, dtype=torch.float)
+            item_dict[k] = v.to(device)
 
         mask = mask.to(device)
 
         if "label" not in batch_dict:
-            continue  # ignorer batch si label absent
+            continue
+        y_true = batch_dict["label"].float().to(device)
 
-        y_true = batch_dict["label"].float()
         optimizer.zero_grad()
-        y_pred = model((batch_dict, item_dict, mask))["y_pred"].squeeze(-1)
+        y_pred = model(x_cat, x_cont, mask, item_dict)["y_pred"].squeeze(-1)
         loss = loss_fn(y_pred, y_true)
         loss.backward()
         optimizer.step()
@@ -117,22 +122,27 @@ for epoch in range(epochs):
     y_trues, y_preds = [], []
     with torch.no_grad():
         for batch_dict, item_dict, mask in valid_loader:
-            batch_dict = {k: v.to(device) for k, v in batch_dict.items()}
+            x_cat = batch_dict.get("x_cat", None)
+            x_cont = batch_dict.get("x_cont", None)
+
+            if x_cat is not None:
+                x_cat = x_cat.to(device)
+            if x_cont is not None:
+                x_cont = x_cont.to(device)
 
             for k, v in item_dict.items():
-                if v.dtype in [torch.float32, torch.float64, torch.int64]:
-                    item_dict[k] = v.to(device)
-                else:
-                    arr = np.stack([np.array(x, dtype=np.float32) for x in v.cpu().numpy()])
-                    item_dict[k] = torch.tensor(arr, dtype=torch.float).to(device)
+                if not torch.is_tensor(v):
+                    arr = np.stack([np.array(x, dtype=np.float32) for x in v])
+                    v = torch.tensor(arr, dtype=torch.float)
+                item_dict[k] = v.to(device)
 
             mask = mask.to(device)
 
             if "label" not in batch_dict:
                 continue
+            y_true = batch_dict["label"].float().to(device)
+            y_pred = model(x_cat, x_cont, mask, item_dict)["y_pred"].squeeze(-1)
 
-            y_true = batch_dict["label"].float()
-            y_pred = model((batch_dict, item_dict, mask))["y_pred"].squeeze(-1)
             y_trues.append(y_true.cpu().numpy())
             y_preds.append(y_pred.cpu().numpy())
 
