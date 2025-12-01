@@ -5,6 +5,22 @@ from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.dataloader import default_collate
 
 # ========================
+# Dummy FeatureMap si aucun FuxiCTR
+# ========================
+class FeatureMapDummy:
+    def __init__(self):
+        self.features = {
+            "user_id": None,
+            "item_seq": None,
+            "likes_level": None,
+            "views_level": None,
+            "item_id": None,
+            "item_tags": None,
+            "item_emb_d128": None
+        }
+        self.labels = ["label"]
+
+# ========================
 # Dataset custom pour Parquet
 # ========================
 class ParquetDataset(Dataset):
@@ -24,10 +40,15 @@ class ParquetDataset(Dataset):
         idx = 0
         for col in df.columns:
             if df[col].dtype == "object":
-                array = np.array(df[col].to_list())
-                seq_len = array.shape[1]
-                self.column_index[col] = [i + idx for i in range(seq_len)]
-                idx += seq_len
+                try:
+                    array = np.array(df[col].to_list())
+                    seq_len = array.shape[1]
+                    self.column_index[col] = [i + idx for i in range(seq_len)]
+                    idx += seq_len
+                except:
+                    array = np.array(df[col].to_list())
+                    self.column_index[col] = idx
+                    idx += 1
             else:
                 array = df[col].to_numpy()
                 self.column_index[col] = idx
@@ -40,7 +61,7 @@ class ParquetDataset(Dataset):
 # ========================
 class BatchCollator:
     def __init__(self, feature_map, max_len, column_index, item_info_path):
-        self.feature_map = feature_map
+        self.feature_map = feature_map or FeatureMapDummy()
         self.max_len = max_len
         self.column_index = column_index
         self.item_info = pd.read_parquet(item_info_path).set_index("item_id")
@@ -58,18 +79,22 @@ class BatchCollator:
                     batch_dict[col] = batch_tensor[:, idx].unsqueeze(1)
 
         # Séquence item_seq padding
-        batch_seqs = batch_dict["item_seq"][:, -self.max_len:]
+        batch_seqs = batch_dict.get("item_seq", torch.zeros(batch_tensor.shape[0], self.max_len))
         mask = (batch_seqs > 0).float()
-        del batch_dict["item_seq"]
+        if "item_seq" in batch_dict:
+            del batch_dict["item_seq"]
 
         # Récupérer item_info
-        item_index = batch_dict["item_id"].reshape(-1).numpy()
-        del batch_dict["item_id"]
-        item_batch = self.item_info.loc[item_index]
-
         item_dict = dict()
-        item_dict["item_tags"] = torch.tensor(np.stack(item_batch["item_tags"].to_list()), dtype=torch.long)
-        item_dict["item_emb_d128"] = torch.tensor(item_batch["item_emb_d128"].to_numpy(), dtype=torch.float)
+        if "item_id" in batch_dict:
+            item_index = batch_dict["item_id"].reshape(-1).numpy()
+            del batch_dict["item_id"]
+            item_batch = self.item_info.loc[item_index]
+            # Colonnes optionnelles
+            if "item_tags" in item_batch.columns:
+                item_dict["item_tags"] = torch.tensor(np.stack(item_batch["item_tags"].to_list()), dtype=torch.long)
+            if "item_emb_d128" in item_batch.columns:
+                item_dict["item_emb_d128"] = torch.tensor(item_batch["item_emb_d128"].to_numpy(), dtype=torch.float)
 
         return batch_dict, item_dict, mask
 

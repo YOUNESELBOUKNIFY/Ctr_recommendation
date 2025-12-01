@@ -1,24 +1,26 @@
 import torch
 import yaml
 import numpy as np
+import os
 from dataloader import MMCTRDataLoader
 from model import build_model
 from utils import set_seed, compute_auc, compute_logloss
-import os
 
 # ========================
 # Charger config YAML
 # ========================
-with open("../config/tabtransformer_config.yaml", "r") as f:
+config_path = "../config/tabtransformer_config.yaml"
+with open(config_path, "r") as f:
     cfg = yaml.safe_load(f)
 
-# Récupérer la seed
+# Seed
 seed = cfg.get("base_config", {}).get("seed", 20242025)
 set_seed(seed)
 
 dataset_id = cfg["dataset_id"]
 dataset_cfg = cfg["dataset_config"][dataset_id]
-model_cfg = cfg[cfg.get("base_expid", "TabTransformer_default")]
+exp_id = cfg.get("base_expid", "TabTransformer_default")
+model_cfg = cfg[exp_id]
 
 # ========================
 # Device et multi-GPU
@@ -36,20 +38,20 @@ train_loader = MMCTRDataLoader(
     feature_map=model_cfg.get("feature_map"),
     data_path=dataset_cfg["train_data"],
     item_info_path=dataset_cfg["item_info"],
-    batch_size=model_cfg["batch_size"],
+    batch_size=int(model_cfg.get("batch_size", 32)),
     shuffle=True,
     num_workers=4,
-    max_len=model_cfg.get("max_len", 5)
+    max_len=int(model_cfg.get("max_len", 5))
 )
 
 valid_loader = MMCTRDataLoader(
     feature_map=model_cfg.get("feature_map"),
     data_path=dataset_cfg["valid_data"],
     item_info_path=dataset_cfg["item_info"],
-    batch_size=model_cfg["batch_size"],
+    batch_size=int(model_cfg.get("batch_size", 32)),
     shuffle=False,
     num_workers=4,
-    max_len=model_cfg.get("max_len", 5)
+    max_len=int(model_cfg.get("max_len", 5))
 )
 
 # ========================
@@ -71,18 +73,23 @@ loss_fn = torch.nn.BCELoss()
 # ========================
 # Répertoire checkpoints
 # ========================
-os.makedirs("./checkpoints", exist_ok=True)
+os.makedirs("../checkpoints", exist_ok=True)
 
 # ========================
 # Entraînement
 # ========================
-for epoch in range(model_cfg.get("epochs", 10)):
+epochs = int(model_cfg.get("epochs", 10))
+for epoch in range(epochs):
     model.train()
     train_loss = 0
     for batch_dict, item_dict, mask in train_loader:
+        # Envoyer tensors sur GPU
         batch_dict = {k: v.to(device) for k, v in batch_dict.items()}
         item_dict = {k: v.to(device) for k, v in item_dict.items()}
         mask = mask.to(device)
+
+        if "label" not in batch_dict:
+            continue  # ignorer batch si label absent
 
         y_true = batch_dict["label"].float()
         optimizer.zero_grad()
@@ -93,7 +100,7 @@ for epoch in range(model_cfg.get("epochs", 10)):
         train_loss += loss.item() * y_true.size(0)
 
     train_loss /= len(train_loader.dataset)
-    print(f"Epoch {epoch+1}/{model_cfg.get('epochs')} - Train Loss: {train_loss:.4f}")
+    print(f"Epoch {epoch+1}/{epochs} - Train Loss: {train_loss:.4f}")
 
     # ========================
     # Validation
@@ -105,6 +112,9 @@ for epoch in range(model_cfg.get("epochs", 10)):
             batch_dict = {k: v.to(device) for k, v in batch_dict.items()}
             item_dict = {k: v.to(device) for k, v in item_dict.items()}
             mask = mask.to(device)
+
+            if "label" not in batch_dict:
+                continue
 
             y_true = batch_dict["label"].float()
             y_pred = model((batch_dict, item_dict, mask))["y_pred"].squeeze(-1)
