@@ -3,6 +3,7 @@ from src.dataloader import MMCTRDataLoader
 from src.model import build_model
 from src.utils import set_seed, compute_auc, compute_logloss
 import yaml
+import numpy as np
 
 # ========================
 # Charger config YAML
@@ -45,6 +46,12 @@ valid_loader = MMCTRDataLoader(feature_map,
 # ========================
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model = build_model(feature_map, model_cfg)
+
+# --- Multi-GPU ---
+if torch.cuda.device_count() > 1:
+    print(f"Using {torch.cuda.device_count()} GPUs!")
+    model = torch.nn.DataParallel(model)
+
 model.to(device)
 
 # Optimizer + loss
@@ -52,7 +59,7 @@ optimizer = torch.optim.Adam(model.parameters(), lr=model_cfg["learning_rate"])
 loss_fn = torch.nn.BCELoss()  # binary classification
 
 # ========================
-# Entraînement simple
+# Entraînement
 # ========================
 for epoch in range(model_cfg["epochs"]):
     model.train()
@@ -93,5 +100,6 @@ for epoch in range(model_cfg["epochs"]):
 # ========================
 # Sauvegarde modèle
 # ========================
-torch.save(model.state_dict(), "./checkpoints/TabTransformer_best.pth")
+torch.save(model.module.state_dict() if hasattr(model, "module") else model.state_dict(),
+           "./checkpoints/TabTransformer_best.pth")
 print("Model saved in ./checkpoints/TabTransformer_best.pth")
