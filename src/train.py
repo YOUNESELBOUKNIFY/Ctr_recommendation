@@ -1,4 +1,3 @@
-import os
 import torch
 import yaml
 import numpy as np
@@ -6,11 +5,7 @@ import pandas as pd
 from torch.utils.data import Dataset, DataLoader
 from tab_transformer_pytorch import TabTransformer
 from sklearn.metrics import roc_auc_score, log_loss
-
-# ========================
-# Créer dossier checkpoints
-# ========================
-os.makedirs("../checkpoints", exist_ok=True)
+import os
 
 # ========================
 # Charger config YAML
@@ -18,24 +13,43 @@ os.makedirs("../checkpoints", exist_ok=True)
 with open("../config/tabtransformer_config.yaml", "r") as f:
     cfg = yaml.safe_load(f)
 
-# ------------------------
-# Seed
-# ------------------------
-seed = cfg["TabTransformer_default"]["seed"]
-torch.manual_seed(seed)
-np.random.seed(seed)
-
+# Dataset & model config
 dataset_id = cfg["dataset_id"]
 dataset_cfg = cfg["dataset_config"][dataset_id]
 model_cfg = cfg["TabTransformer_default"]
 
+# Seed
+seed = cfg.get("seed", 2025)
+torch.manual_seed(seed)
+np.random.seed(seed)
+
 device = "cuda" if torch.cuda.is_available() else "cpu"
+
+# ========================
+# Colonnes
+# ========================
+cat_cols = ["likes_level", "views_level", "item_id", "item_tags"]
+cont_cols = ["item_emb_d128"]
+label_col = dataset_cfg["label_col"]["name"]
+
+# Récupérer vocab_size pour chaque colonne catégorielle/sequence
+categories = []
+for col_name in cat_cols:
+    for feat in dataset_cfg["feature_cols"]:
+        if feat["name"] == col_name:
+            if feat["type"] in ["categorical", "sequence"]:
+                categories.append(feat["vocab_size"])
+            else:
+                raise ValueError(f"La colonne {col_name} n'est pas catégorielle ou sequence")
+
+# Nombre de features continues
+num_cont = sum([feat.get("embedding_dim", 1) for feat in dataset_cfg["feature_cols"] if feat["name"] in cont_cols])
 
 # ========================
 # Dataset / DataLoader
 # ========================
 class ParquetDataset(Dataset):
-    def __init__(self, data_path, cat_cols, cont_cols, label_col):
+    def __init__(self, data_path):
         self.df = pd.read_parquet(data_path)
         self.cat_cols = cat_cols
         self.cont_cols = cont_cols
@@ -46,30 +60,22 @@ class ParquetDataset(Dataset):
 
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
+        # Categorical: convert to long
         x_cat = torch.tensor(row[self.cat_cols].values, dtype=torch.long)
+        # Continuous: convert to float
         x_cont = torch.tensor(row[self.cont_cols].values, dtype=torch.float)
         y = torch.tensor(row[self.label_col], dtype=torch.float)
         return x_cat, x_cont, y
 
-# Colonnes catégorielles et continues
-cat_cols = ["likes_level", "views_level", "item_id"]
-cont_cols = ["item_emb_d128"]
-label_col = "label"
+train_dataset = ParquetDataset(dataset_cfg["train_data"])
+valid_dataset = ParquetDataset(dataset_cfg["valid_data"])
 
-# Dataset
-train_dataset = ParquetDataset(dataset_cfg["train_data"], cat_cols, cont_cols, label_col)
-valid_dataset = ParquetDataset(dataset_cfg["valid_data"], cat_cols, cont_cols, label_col)
-
-# DataLoader
 train_loader = DataLoader(train_dataset, batch_size=model_cfg["batch_size"], shuffle=True, num_workers=4)
 valid_loader = DataLoader(valid_dataset, batch_size=model_cfg["batch_size"], shuffle=False, num_workers=4)
 
 # ========================
 # Modèle
 # ========================
-categories = [dataset_cfg["feature_cols"][i]["vocab_size"] for i, c in enumerate(cat_cols)]
-num_cont = len(cont_cols) * dataset_cfg["feature_cols"][-1]["embedding_dim"]
-
 model = TabTransformer(
     categories=categories,
     num_continuous=num_cont,
@@ -90,13 +96,14 @@ if torch.cuda.device_count() > 1:
 
 model.to(device)
 
-# Optimizer + loss
 optimizer = torch.optim.Adam(model.parameters(), lr=model_cfg["learning_rate"])
 loss_fn = torch.nn.BCELoss()
 
 # ========================
 # Entraînement
 # ========================
+os.makedirs("./checkpoints", exist_ok=True)
+
 for epoch in range(model_cfg["epochs"]):
     model.train()
     train_loss = 0
@@ -138,4 +145,4 @@ for epoch in range(model_cfg["epochs"]):
 # ========================
 torch.save(model.module.state_dict() if hasattr(model, "module") else model.state_dict(),
            "../checkpoints/TabTransformer_best.pth")
-print("Model saved in ../checkpoints/TabTransformer_best.pth")
+print("Model saved in ./checkpoints/TabTransformer_best.pth")
