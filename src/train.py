@@ -1,9 +1,9 @@
 import torch
 import yaml
 import numpy as np
-from src.dataloader import MMCTRDataLoader
-from src.model import build_model
-from src.utils import set_seed, compute_auc, compute_logloss
+from dataloader import MMCTRDataLoader
+from model import build_model
+from utils import set_seed, compute_auc, compute_logloss
 import os
 
 # ========================
