@@ -1,3 +1,4 @@
+import os
 import torch
 import yaml
 import numpy as np
@@ -7,12 +8,20 @@ from tab_transformer_pytorch import TabTransformer
 from sklearn.metrics import roc_auc_score, log_loss
 
 # ========================
+# Créer dossier checkpoints
+# ========================
+os.makedirs("../checkpoints", exist_ok=True)
+
+# ========================
 # Charger config YAML
 # ========================
 with open("../config/tabtransformer_config.yaml", "r") as f:
     cfg = yaml.safe_load(f)
 
-seed = cfg["base_config"]["seed"]
+# ------------------------
+# Seed
+# ------------------------
+seed = cfg["TabTransformer_default"]["seed"]
 torch.manual_seed(seed)
 np.random.seed(seed)
 
@@ -26,12 +35,11 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 # Dataset / DataLoader
 # ========================
 class ParquetDataset(Dataset):
-    def __init__(self, data_path):
+    def __init__(self, data_path, cat_cols, cont_cols, label_col):
         self.df = pd.read_parquet(data_path)
-        # Séparer features catégorielles et continues
-        self.cat_cols = ["likes_level", "views_level", "item_id"]
-        self.cont_cols = ["item_emb_d128"]
-        self.label_col = "label"
+        self.cat_cols = cat_cols
+        self.cont_cols = cont_cols
+        self.label_col = label_col
 
     def __len__(self):
         return len(self.df)
@@ -43,25 +51,32 @@ class ParquetDataset(Dataset):
         y = torch.tensor(row[self.label_col], dtype=torch.float)
         return x_cat, x_cont, y
 
-train_dataset = ParquetDataset(dataset_cfg["train_data"])
-valid_dataset = ParquetDataset(dataset_cfg["valid_data"])
+# Colonnes catégorielles et continues
+cat_cols = ["likes_level", "views_level", "item_id"]
+cont_cols = ["item_emb_d128"]
+label_col = "label"
 
+# Dataset
+train_dataset = ParquetDataset(dataset_cfg["train_data"], cat_cols, cont_cols, label_col)
+valid_dataset = ParquetDataset(dataset_cfg["valid_data"], cat_cols, cont_cols, label_col)
+
+# DataLoader
 train_loader = DataLoader(train_dataset, batch_size=model_cfg["batch_size"], shuffle=True, num_workers=4)
 valid_loader = DataLoader(valid_dataset, batch_size=model_cfg["batch_size"], shuffle=False, num_workers=4)
 
 # ========================
 # Modèle
 # ========================
-categories = [11, 11, 91718]  # likes_level, views_level, item_id
-num_cont = 128  # dimension de item_emb_d128
+categories = [dataset_cfg["feature_cols"][i]["vocab_size"] for i, c in enumerate(cat_cols)]
+num_cont = len(cont_cols) * dataset_cfg["feature_cols"][-1]["embedding_dim"]
 
 model = TabTransformer(
     categories=categories,
     num_continuous=num_cont,
     dim=model_cfg["embedding_dim"],
-    depth=4,
-    heads=4,
-    attn_dropout=model_cfg.get("attention_dropout", 0.1),
+    depth=model_cfg.get("transformer_n_layers", 2),
+    heads=model_cfg.get("transformer_n_heads", 4),
+    attn_dropout=model_cfg.get("transformer_dropout", 0.1),
     ff_dropout=model_cfg.get("net_dropout", 0.0),
     mlp_hidden_mults=(4, 2),
     mlp_act=torch.nn.ReLU(),
@@ -75,6 +90,7 @@ if torch.cuda.device_count() > 1:
 
 model.to(device)
 
+# Optimizer + loss
 optimizer = torch.optim.Adam(model.parameters(), lr=model_cfg["learning_rate"])
 loss_fn = torch.nn.BCELoss()
 
@@ -121,5 +137,5 @@ for epoch in range(model_cfg["epochs"]):
 # Sauvegarde modèle
 # ========================
 torch.save(model.module.state_dict() if hasattr(model, "module") else model.state_dict(),
-           "./checkpoints/TabTransformer_best.pth")
-print("Model saved in ./checkpoints/TabTransformer_best.pth")
+           "../checkpoints/TabTransformer_best.pth")
+print("Model saved in ../checkpoints/TabTransformer_best.pth")

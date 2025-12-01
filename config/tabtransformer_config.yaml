@@ -30,6 +30,7 @@ dataset_config:
 # Model configuration
 # ========================
 TabTransformer_default:
+  seed: 20242025
   model: TabTransformer
   dataset_id: MicroLens_1M_x1
   task: binary_classification
