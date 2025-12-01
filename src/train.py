@@ -85,7 +85,11 @@ for epoch in range(epochs):
     for batch_dict, item_dict, mask in train_loader:
         # Envoyer tensors sur GPU
         batch_dict = {k: v.to(device) for k, v in batch_dict.items()}
-        item_dict = {k: v.to(device) for k, v in item_dict.items()}
+        # Corriger item_emb_d128 s'il est object
+        for k, v in item_dict.items():
+            if v.dtype == torch.object:
+                v = torch.tensor(np.stack([np.array(x, dtype=np.float32) for x in v.cpu().numpy()]))
+            item_dict[k] = v.to(device)
         mask = mask.to(device)
 
         if "label" not in batch_dict:
@@ -110,7 +114,10 @@ for epoch in range(epochs):
     with torch.no_grad():
         for batch_dict, item_dict, mask in valid_loader:
             batch_dict = {k: v.to(device) for k, v in batch_dict.items()}
-            item_dict = {k: v.to(device) for k, v in item_dict.items()}
+            for k, v in item_dict.items():
+                if v.dtype == torch.object:
+                    v = torch.tensor(np.stack([np.array(x, dtype=np.float32) for x in v.cpu().numpy()]))
+                item_dict[k] = v.to(device)
             mask = mask.to(device)
 
             if "label" not in batch_dict:
