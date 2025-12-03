@@ -91,7 +91,7 @@ def objective(trial):
     loss_fn = torch.nn.BCELoss()
 
     # --- C. Training Loop (Short) ---
-    epochs = 5
+    epochs = 30
     best_valid_auc = 0.0
 
     for epoch in range(epochs):
