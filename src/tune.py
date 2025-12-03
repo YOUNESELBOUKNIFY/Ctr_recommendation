@@ -126,12 +126,17 @@ def objective(trial):
             auc = compute_auc(np.concatenate(y_trues), np.concatenate(y_preds))
         else:
             auc = 0.0
+            
+        # === AFFICHAGE DE L'AUC EN TEMPS RÉEL ===
+        print(f"Trial {trial.number} | Epoch {epoch+1} | Valid AUC: {auc:.4f}")
         
         # --- E. Pruning (Arrêt automatique si mauvais résultats) ---
         # Optuna compare l'AUC actuel aux meilleurs essais précédents.
         # S'il est trop bas, on arrête tout de suite (TrialPruned).
         trial.report(auc, epoch)
         if trial.should_prune():
+            # Petit message pour dire qu'on arrête
+            print(f"Trial {trial.number} pruned at epoch {epoch+1}.")
             raise optuna.exceptions.TrialPruned()
             
         best_valid_auc = max(best_valid_auc, auc)
