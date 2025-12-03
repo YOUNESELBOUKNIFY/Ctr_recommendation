@@ -1,180 +1,164 @@
 import torch
-import torch.nn as nn
+import yaml
 import numpy as np
+import os
+import sys
 
-# ==========================================
-# 1. Composants internes (Style FuxiCTR)
-# ==========================================
+# Ajout du chemin src au path si nécessaire
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-class Dice(nn.Module):
-    """Activation Dice officielle de FuxiCTR / DIN Paper"""
-    def __init__(self, input_dim, epsilon=1e-8):
-        super(Dice, self).__init__()
-        self.bn = nn.BatchNorm1d(input_dim, eps=epsilon)
-        self.sigmoid = nn.Sigmoid()
-        self.alpha = nn.Parameter(torch.zeros((input_dim,)))
+from dataloader import MMCTRDataLoader
+# IMPORT DU NOUVEAU MODÈLE
+from model_new import build_model 
+from utils import set_seed, compute_auc, compute_logloss
 
-    def forward(self, x):
-        # Support pour 2D ou 3D inputs
-        if x.dim() == 3:
-            x_p = self.bn(x.transpose(1, 2)).transpose(1, 2)
-        else:
-            x_p = self.bn(x)
-        gate = self.sigmoid(x_p)
-        return gate * x + (1 - gate) * self.alpha * x
+# ========================
+# 1. Charger config YAML
+# ========================
+config_path = "../config/tabtransformer_config.yaml"
 
-class MLP_Block(nn.Module):
-    """Bloc MLP standard"""
-    def __init__(self, input_dim, hidden_units, activation='ReLU', dropout=0.0):
-        super(MLP_Block, self).__init__()
-        layers = []
-        prev_dim = input_dim
-        for unit in hidden_units:
-            layers.append(nn.Linear(prev_dim, unit))
-            layers.append(nn.BatchNorm1d(unit))
+# Vérification du fichier
+if not os.path.exists(config_path):
+    config_path = "config/tabtransformer_config.yaml"
+
+with open(config_path, "r") as f:
+    cfg = yaml.safe_load(f)
+
+# Seed
+seed = cfg.get("base_config", {}).get("seed", 2025)
+set_seed(seed)
+
+dataset_id = cfg["dataset_id"]
+dataset_cfg = cfg["dataset_config"][dataset_id]
+exp_id = cfg.get("base_expid", "TabTransformer_default")
+model_cfg = cfg[exp_id]
+
+# ========================
+# 2. Device et multi-GPU
+# ========================
+device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Using device: {device}")
+
+# ========================
+# 3. DataLoader
+# ========================
+print("Initialisation des DataLoaders pour MMDIN...")
+# Augmentation du batch_size si possible car MMDIN est parfois plus léger en mémoire
+batch_size = int(model_cfg.get("batch_size", 8192))
+max_len = int(model_cfg.get("max_len", 20)) # Important pour l'historique DIN
+
+train_loader = MMCTRDataLoader(
+    feature_map=None,
+    data_path=dataset_cfg["train_data"],
+    item_info_path=dataset_cfg["item_info"],
+    batch_size=batch_size,
+    shuffle=True,
+    num_workers=4,
+    max_len=max_len
+)
+
+valid_loader = MMCTRDataLoader(
+    feature_map=None,
+    data_path=dataset_cfg["valid_data"],
+    item_info_path=dataset_cfg["item_info"],
+    batch_size=batch_size,
+    shuffle=False,
+    num_workers=4,
+    max_len=max_len
+)
+
+# ========================
+# 4. Modèle (MMDIN)
+# ========================
+print("Construction du modèle MMDIN...")
+model = build_model(None, model_cfg)
+
+multi_gpu = torch.cuda.device_count() > 1
+if multi_gpu:
+    print(f"Using {torch.cuda.device_count()} GPUs!")
+    model = torch.nn.DataParallel(model)
+
+model.to(device)
+
+# Optimizer et loss
+learning_rate = float(model_cfg.get("learning_rate", 1e-3))
+optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+loss_fn = torch.nn.BCELoss() 
+
+# Répertoire checkpoints
+os.makedirs("../checkpoints", exist_ok=True)
+
+# ========================
+# 5. Entraînement
+# ========================
+epochs = int(model_cfg.get("epochs", 10))
+print(f"Début de l'entraînement MMDIN pour {epochs} époques.")
+
+best_auc = 0.0
+
+for epoch in range(epochs):
+    model.train()
+    total_loss = 0
+    steps = 0
+    
+    for batch_dict, labels in train_loader:
+        
+        # Transfert vers GPU
+        for k, v in batch_dict.items():
+            batch_dict[k] = v.to(device)
+        
+        labels = labels.to(device)
+
+        # Forward
+        optimizer.zero_grad()
+        y_pred = model(batch_dict) 
+        
+        # Loss
+        loss = loss_fn(y_pred, labels)
+        loss.backward()
+        optimizer.step()
+        
+        total_loss += loss.item()
+        steps += 1
+        
+        if steps % 100 == 0:
+            print(f"Epoch {epoch+1} | Step {steps} | Loss: {loss.item():.4f}")
+
+    avg_loss = total_loss / steps if steps > 0 else 0
+    print(f"Epoch {epoch+1}/{epochs} - Train Loss: {avg_loss:.4f}")
+
+    # ========================
+    # Validation
+    # ========================
+    model.eval()
+    y_trues, y_preds = [], []
+    
+    with torch.no_grad():
+        for batch_dict, labels in valid_loader:
+            for k, v in batch_dict.items():
+                batch_dict[k] = v.to(device)
             
-            if activation == 'Dice':
-                layers.append(Dice(unit))
-            elif activation == 'ReLU':
-                layers.append(nn.ReLU())
-            elif activation == 'PReLU':
-                layers.append(nn.PReLU())
-                
-            if dropout > 0:
-                layers.append(nn.Dropout(dropout))
-            prev_dim = unit
-        
-        self.mlp = nn.Sequential(*layers)
-        self.out_dim = prev_dim
+            y_pred = model(batch_dict) # Forward MMDIN
 
-    def forward(self, x):
-        return self.mlp(x)
+            y_trues.append(labels.cpu().numpy())
+            y_preds.append(y_pred.cpu().numpy())
 
-class DIN_Attention(nn.Module):
-    """Couche d'Attention DIN"""
-    def __init__(self, embedding_dim, attention_units=[64, 32], activation='Dice'):
-        super(DIN_Attention, self).__init__()
-        # Input de l'attention : Query + Key + Query-Key + Query*Key
-        input_dim = 4 * embedding_dim
-        self.mlp = MLP_Block(input_dim, attention_units, activation=activation)
-        self.fc = nn.Linear(attention_units[-1], 1)
+    if len(y_trues) > 0:
+        y_trues = np.concatenate(y_trues)
+        y_preds = np.concatenate(y_preds)
+        
+        auc = compute_auc(y_trues, y_preds)
+        logloss = compute_logloss(y_trues, y_preds)
+        print(f"Epoch {epoch+1}: Valid AUC={auc:.4f}, LogLoss={logloss:.4f}")
 
-    def forward(self, query, facts, mask):
-        # query: (B, 1, Emb)
-        # facts: (B, Seq, Emb)
-        # mask: (B, Seq, 1)
-        
-        B, Seq, Emb = facts.size()
-        queries = query.expand(-1, Seq, -1)
-        
-        # Interactions
-        attention_input = torch.cat([
-            queries, 
-            facts, 
-            queries - facts, 
-            queries * facts
-        ], dim=-1) # (B, Seq, 4*Emb)
-        
-        # On passe dans le MLP (on aplatit pour le Batchnorm)
-        attention_input = attention_input.view(-1, 4 * Emb)
-        attn_out = self.mlp(attention_input)
-        scores = self.fc(attn_out).view(B, Seq, 1) # (B, Seq, 1)
-        
-        # Masquage
-        paddings = torch.ones_like(scores) * (-1e9)
-        scores = torch.where(mask.bool(), scores, paddings)
-        
-        # Softmax & Pooling
-        weights = torch.softmax(scores, dim=1)
-        output = torch.sum(weights * facts, dim=1) # (B, Emb)
-        return output
+        # Sauvegarde
+        if auc > best_auc:
+            best_auc = auc
+            checkpoint_path = "../checkpoints/MMDIN_best.pth"
+            state_dict = model.module.state_dict() if hasattr(model, "module") else model.state_dict()
+            torch.save(state_dict, checkpoint_path)
+            print(f"New Best AUC! Model saved in {checkpoint_path}")
+    else:
+        print("Warning: Validation set empty.")
 
-# ==========================================
-# 2. Modèle DIN (Structure FuxiCTR adaptée)
-# ==========================================
-
-class DIN(nn.Module):
-    def __init__(self, feature_map, model_cfg):
-        super(DIN, self).__init__()
-        
-        self.emb_dim = model_cfg.get("embedding_dim", 64)
-        mm_input_dim = 128
-        
-        # --- Embeddings ---
-        # IDs
-        self.item_emb = nn.Embedding(91718, self.emb_dim, padding_idx=0)
-        self.user_emb = nn.Embedding(20000, self.emb_dim) # Placeholder
-        self.cate_emb = nn.Embedding(11, 16) # Likes/Views levels
-        
-        # Projection Multimodale (Image -> Emb space)
-        self.mm_proj = nn.Sequential(
-            nn.Linear(mm_input_dim, self.emb_dim),
-            nn.BatchNorm1d(self.emb_dim),
-            nn.ReLU()
-        )
-        
-        # --- DIN Core ---
-        self.attention = DIN_Attention(
-            self.emb_dim, 
-            attention_units=[64, 32], 
-            activation='Dice'
-        )
-        
-        # --- MLP Final ---
-        # Entrée = User + Contexte + Target(Emb) + Attention(Emb)
-        dnn_input_dim = self.emb_dim + (16*2) + self.emb_dim + self.emb_dim
-        
-        self.dnn = MLP_Block(
-            dnn_input_dim, 
-            hidden_units=model_cfg.get("dnn_hidden_units", [512, 128, 64]),
-            activation="Dice",
-            dropout=model_cfg.get("net_dropout", 0.1)
-        )
-        self.final_linear = nn.Linear(self.dnn.out_dim, 1)
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, batch_dict):
-        # 1. Récupération des Inputs
-        item_id = batch_dict['item_id'].long()
-        item_mm = batch_dict['item_emb_d128'].float()
-        hist_ids = batch_dict.get('item_seq', None)
-        
-        likes = batch_dict['likes_level'].long()
-        views = batch_dict['views_level'].long()
-        
-        # 2. Embedding Item Cible (ID + Image)
-        target_id_emb = self.item_emb(item_id)
-        target_mm_emb = self.mm_proj(item_mm)
-        target_emb = target_id_emb + target_mm_emb # Fusion
-        
-        # 3. Attention sur Historique
-        if hist_ids is not None:
-            # Mask (B, Seq, 1)
-            mask = (hist_ids > 0).unsqueeze(-1)
-            
-            # Pour l'historique, on utilise l'embedding ID (car MM seq non dispo souvent)
-            sequence_emb = self.item_emb(hist_ids)
-            
-            # DIN Attention Layer
-            # Target (Query) vs Sequence (Facts)
-            pooling_emb = self.attention(target_emb.unsqueeze(1), sequence_emb, mask)
-        else:
-            pooling_emb = torch.zeros_like(target_emb)
-
-        # 4. Features Utilisateur & Contexte
-        user_feat = torch.zeros((item_id.size(0), self.emb_dim), device=item_id.device)
-        ctx_feat = torch.cat([self.cate_emb(likes), self.cate_emb(views)], dim=1)
-        
-        # 5. Concaténation
-        # [User, Context, Target Item, History Interest]
-        feature_emb = torch.cat([user_feat, ctx_feat, target_emb, pooling_emb], dim=-1)
-        
-        # 6. MLP & Prediction
-        dnn_out = self.dnn(feature_emb)
-        y_pred = self.final_linear(dnn_out)
-        
-        return self.sigmoid(y_pred).squeeze(-1)
-
-# Wrapper pour l'appel depuis train.py
-def build_model(feature_map, model_cfg):
-    return DIN(feature_map, model_cfg)
+print("Entraînement MMDIN terminé.")

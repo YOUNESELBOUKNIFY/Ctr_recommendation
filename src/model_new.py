@@ -1,186 +1,180 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import numpy as np
 
-class DICE(nn.Module):
-    """
-    Data Adaptive Activation Function (Version Finale Optimisée).
-    
-    Cette activation s'adapte dynamiquement à la distribution des données d'entrée.
-    Le paramètre 'alpha' est apprenable (nn.Parameter), permettant au modèle de décider 
-    de la pente optimale pour la partie négative (leaky) de chaque neurone.
-    """
-    def __init__(self, emb_size, dim=2, epsilon=1e-8):
-        super(DICE, self).__init__()
-        assert dim == 2 or dim == 3
-        
-        # Batch Normalization pour standardiser l'input
-        self.bn = nn.BatchNorm1d(emb_size, eps=epsilon)
+# ==========================================
+# 1. Composants internes (Style FuxiCTR)
+# ==========================================
+
+class Dice(nn.Module):
+    """Activation Dice officielle de FuxiCTR / DIN Paper"""
+    def __init__(self, input_dim, epsilon=1e-8):
+        super(Dice, self).__init__()
+        self.bn = nn.BatchNorm1d(input_dim, eps=epsilon)
         self.sigmoid = nn.Sigmoid()
-        self.dim = dim
-        
-        # PARAMÈTRE APPRENABLE : Alpha (pente de la partie rectifiée)
-        # Initialisé à 0.0 (comme ReLU), il évoluera pendant l'entraînement par backprop.
-        self.alpha = nn.Parameter(torch.zeros((emb_size,)))
+        self.alpha = nn.Parameter(torch.zeros((input_dim,)))
 
     def forward(self, x):
-        # 1. Normalisation (x_p)
-        # On transpose si l'entrée est en 3D (Batch, Seq, Emb) car BatchNorm1d attend (N, C, L)
-        if self.dim == 2:
-            x_p = self.bn(x)
-        else:
+        # Support pour 2D ou 3D inputs
+        if x.dim() == 3:
             x_p = self.bn(x.transpose(1, 2)).transpose(1, 2)
-        
-        # 2. Calcul de la probabilité d'activation (gate)
-        gate = self.sigmoid(x_p)
-        
-        # 3. Gestion du broadcasting pour alpha
-        if self.dim == 2:
-            alpha = self.alpha.unsqueeze(0)       # (1, Emb) pour broadcaster sur (Batch, Emb)
         else:
-            alpha = self.alpha.view(1, 1, -1)     # (1, 1, Emb) pour broadcaster sur (Batch, Seq, Emb)
+            x_p = self.bn(x)
+        gate = self.sigmoid(x_p)
+        return gate * x + (1 - gate) * self.alpha * x
+
+class MLP_Block(nn.Module):
+    """Bloc MLP standard"""
+    def __init__(self, input_dim, hidden_units, activation='ReLU', dropout=0.0):
+        super(MLP_Block, self).__init__()
+        layers = []
+        prev_dim = input_dim
+        for unit in hidden_units:
+            layers.append(nn.Linear(prev_dim, unit))
+            layers.append(nn.BatchNorm1d(unit))
             
-        # 4. Formule DICE : p(s) * s + (1 - p(s)) * alpha * s
-        return gate * x + (1 - gate) * alpha * x
-
-class LocalActivationUnit(nn.Module):
-    """
-    Unité d'Attention Locale (Cœur de DIN).
-    Détermine l'importance de chaque item de l'historique par rapport à l'item cible.
-    """
-    def __init__(self, hidden_size=[80, 40], embedding_dim=64):
-        super(LocalActivationUnit, self).__init__()
+            if activation == 'Dice':
+                layers.append(Dice(unit))
+            elif activation == 'ReLU':
+                layers.append(nn.ReLU())
+            elif activation == 'PReLU':
+                layers.append(nn.PReLU())
+                
+            if dropout > 0:
+                layers.append(nn.Dropout(dropout))
+            prev_dim = unit
         
-        # Entrée: Query + Key + (Query-Key) + (Query*Key)
+        self.mlp = nn.Sequential(*layers)
+        self.out_dim = prev_dim
+
+    def forward(self, x):
+        return self.mlp(x)
+
+class DIN_Attention(nn.Module):
+    """Couche d'Attention DIN"""
+    def __init__(self, embedding_dim, attention_units=[64, 32], activation='Dice'):
+        super(DIN_Attention, self).__init__()
+        # Input de l'attention : Query + Key + Query-Key + Query*Key
         input_dim = 4 * embedding_dim
-        
-        # Réseau dense avec activation DICE pour capturer les relations non-linéaires complexes
-        self.dnn = nn.Sequential(
-            nn.Linear(input_dim, hidden_size[0]),
-            DICE(hidden_size[0], dim=2),
-            nn.Linear(hidden_size[0], hidden_size[1]),
-            DICE(hidden_size[1], dim=2),
-            nn.Linear(hidden_size[1], 1)
-        )
+        self.mlp = MLP_Block(input_dim, attention_units, activation=activation)
+        self.fc = nn.Linear(attention_units[-1], 1)
 
-    def forward(self, query, user_behavior):
-        # query: (Batch, 1, Emb_Dim) -> Item cible
-        # user_behavior: (Batch, Seq_Len, Emb_Dim) -> Historique
+    def forward(self, query, facts, mask):
+        # query: (B, 1, Emb)
+        # facts: (B, Seq, Emb)
+        # mask: (B, Seq, 1)
         
-        seq_len = user_behavior.size(1)
-        # Répétition de la query pour correspondre à la séquence
-        queries = query.expand(-1, seq_len, -1)
+        B, Seq, Emb = facts.size()
+        queries = query.expand(-1, Seq, -1)
         
-        # Interactions explicites
+        # Interactions
         attention_input = torch.cat([
             queries, 
-            user_behavior, 
-            queries - user_behavior, 
-            queries * user_behavior
-        ], dim=-1) # (Batch, Seq, 4*Emb)
+            facts, 
+            queries - facts, 
+            queries * facts
+        ], dim=-1) # (B, Seq, 4*Emb)
         
-        # Aplatir pour BatchNorm1d dans DICE (Batch * Seq, Features)
-        batch_size = attention_input.size(0)
-        attention_input = attention_input.view(-1, attention_input.size(-1)) 
+        # On passe dans le MLP (on aplatit pour le Batchnorm)
+        attention_input = attention_input.view(-1, 4 * Emb)
+        attn_out = self.mlp(attention_input)
+        scores = self.fc(attn_out).view(B, Seq, 1) # (B, Seq, 1)
         
-        attention_score = self.dnn(attention_input) 
+        # Masquage
+        paddings = torch.ones_like(scores) * (-1e9)
+        scores = torch.where(mask.bool(), scores, paddings)
         
-        # Retour au format (Batch, Seq, 1)
-        return attention_score.view(batch_size, seq_len, 1)
+        # Softmax & Pooling
+        weights = torch.softmax(scores, dim=1)
+        output = torch.sum(weights * facts, dim=1) # (B, Emb)
+        return output
 
-class MMDIN(nn.Module):
-    """
-    Multi-Modal Deep Interest Network (MMDIN).
-    Architecture finale combinant embeddings ID et Multimodaux avec Attention DIN.
-    """
+# ==========================================
+# 2. Modèle DIN (Structure FuxiCTR adaptée)
+# ==========================================
+
+class DIN(nn.Module):
     def __init__(self, feature_map, model_cfg):
-        super(MMDIN, self).__init__()
+        super(DIN, self).__init__()
         
         self.emb_dim = model_cfg.get("embedding_dim", 64)
-        mm_input_dim = 128 # Provenant de BERT/CLIP (dataset MicroLens)
+        mm_input_dim = 128
         
-        # --- 1. Embeddings Identifiants (Sparse) ---
-        # Tailles vocabulaire à ajuster selon le dataset réel si besoin
-        self.user_emb = nn.Embedding(20000, self.emb_dim)
-        self.item_id_emb = nn.Embedding(91718, self.emb_dim, padding_idx=0)
+        # --- Embeddings ---
+        # IDs
+        self.item_emb = nn.Embedding(91718, self.emb_dim, padding_idx=0)
+        self.user_emb = nn.Embedding(20000, self.emb_dim) # Placeholder
+        self.cate_emb = nn.Embedding(11, 16) # Likes/Views levels
         
-        # Embeddings de contexte (Catégoriels)
-        self.likes_emb = nn.Embedding(11, 16)
-        self.views_emb = nn.Embedding(11, 16)
-        
-        # --- 2. Projection Multimodale ---
-        # Transforme le vecteur image 128d pour le rendre compatible avec l'espace ID
-        # Utilise DICE pour ne pas perdre d'info visuelle par coupure (ReLU)
-        self.mm_projector = nn.Sequential(
+        # Projection Multimodale (Image -> Emb space)
+        self.mm_proj = nn.Sequential(
             nn.Linear(mm_input_dim, self.emb_dim),
-            DICE(self.emb_dim, dim=2) 
-        )
-
-        # --- 3. Couche d'Attention ---
-        self.attention = LocalActivationUnit(hidden_size=[80, 40], embedding_dim=self.emb_dim)
-        
-        # --- 4. MLP Final ---
-        # Taille entrée : User(Placeholder) + Context(32) + Target(Emb) + HistoryInterest(Emb)
-        input_size = self.emb_dim + 32 + self.emb_dim + self.emb_dim
-        
-        self.mlp = nn.Sequential(
-            nn.Linear(input_size, 256),
-            DICE(256, dim=2),
-            nn.Dropout(model_cfg.get("net_dropout", 0.1)),
-            nn.Linear(256, 128),
-            DICE(128, dim=2),
-            nn.Dropout(model_cfg.get("net_dropout", 0.1)),
-            nn.Linear(128, 1)
+            nn.BatchNorm1d(self.emb_dim),
+            nn.ReLU()
         )
         
+        # --- DIN Core ---
+        self.attention = DIN_Attention(
+            self.emb_dim, 
+            attention_units=[64, 32], 
+            activation='Dice'
+        )
+        
+        # --- MLP Final ---
+        # Entrée = User + Contexte + Target(Emb) + Attention(Emb)
+        dnn_input_dim = self.emb_dim + (16*2) + self.emb_dim + self.emb_dim
+        
+        self.dnn = MLP_Block(
+            dnn_input_dim, 
+            hidden_units=model_cfg.get("dnn_hidden_units", [512, 128, 64]),
+            activation="Dice",
+            dropout=model_cfg.get("net_dropout", 0.1)
+        )
+        self.final_linear = nn.Linear(self.dnn.out_dim, 1)
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, batch_dict):
-        # A. Récupération des données
+        # 1. Récupération des Inputs
         item_id = batch_dict['item_id'].long()
         item_mm = batch_dict['item_emb_d128'].float()
-        likes = batch_dict['likes_level'].long()
-        views = batch_dict['views_level'].long()
         hist_ids = batch_dict.get('item_seq', None)
         
-        # B. Représentation de l'Item Cible (Target)
-        target_id_emb = self.item_id_emb(item_id)          # ID Embedding
-        target_mm_emb = self.mm_projector(item_mm)         # Visual Embedding projeté
+        likes = batch_dict['likes_level'].long()
+        views = batch_dict['views_level'].long()
         
-        # Fusion : L'item est défini par son ID + son Visuel
-        target_combined = target_id_emb + target_mm_emb
+        # 2. Embedding Item Cible (ID + Image)
+        target_id_emb = self.item_emb(item_id)
+        target_mm_emb = self.mm_proj(item_mm)
+        target_emb = target_id_emb + target_mm_emb # Fusion
         
-        # C. Attention sur l'Historique (Deep Interest)
+        # 3. Attention sur Historique
         if hist_ids is not None:
-            mask = (hist_ids > 0).unsqueeze(-1) # Masque pour le padding
-            hist_emb = self.item_id_emb(hist_ids)
+            # Mask (B, Seq, 1)
+            mask = (hist_ids > 0).unsqueeze(-1)
             
-            # Calcul des poids d'attention
-            # "Quelle partie de l'historique ressemble à l'item cible ?"
-            att_scores = self.attention(target_combined.unsqueeze(1), hist_emb)
+            # Pour l'historique, on utilise l'embedding ID (car MM seq non dispo souvent)
+            sequence_emb = self.item_emb(hist_ids)
             
-            # Application du masque (score très bas pour le padding)
-            paddings = torch.ones_like(att_scores) * (-1e9)
-            att_scores = torch.where(mask, att_scores, paddings)
-            
-            # Somme pondérée de l'historique
-            att_weights = F.softmax(att_scores, dim=1)
-            user_interest = torch.sum(att_weights * hist_emb, dim=1)
+            # DIN Attention Layer
+            # Target (Query) vs Sequence (Facts)
+            pooling_emb = self.attention(target_emb.unsqueeze(1), sequence_emb, mask)
         else:
-            # Fallback si pas d'historique (Cold start)
-            user_interest = torch.zeros_like(target_combined)
+            pooling_emb = torch.zeros_like(target_emb)
 
-        # D. Concaténation finale
-        # Placeholder pour User Embedding (à 0 si pas d'user_id stable ou nouveau user)
+        # 4. Features Utilisateur & Contexte
         user_feat = torch.zeros((item_id.size(0), self.emb_dim), device=item_id.device)
-
-        ctx_feat = torch.cat([self.likes_emb(likes), self.views_emb(views)], dim=1)
+        ctx_feat = torch.cat([self.cate_emb(likes), self.cate_emb(views)], dim=1)
         
-        dnn_input = torch.cat([user_feat, ctx_feat, target_combined, user_interest], dim=1)
+        # 5. Concaténation
+        # [User, Context, Target Item, History Interest]
+        feature_emb = torch.cat([user_feat, ctx_feat, target_emb, pooling_emb], dim=-1)
         
-        # E. Prédiction finale
-        logit = self.mlp(dnn_input)
-        return self.sigmoid(logit).squeeze(-1)
+        # 6. MLP & Prediction
+        dnn_out = self.dnn(feature_emb)
+        y_pred = self.final_linear(dnn_out)
+        
+        return self.sigmoid(y_pred).squeeze(-1)
 
+# Wrapper pour l'appel depuis train.py
 def build_model(feature_map, model_cfg):
-    return MMDIN(feature_map, model_cfg)
+    return DIN(feature_map, model_cfg)
