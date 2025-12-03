@@ -30,6 +30,11 @@ base_model_cfg = raw_cfg[base_exp_id]
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Tuning on device: {device}")
 
+# Vérification Multi-GPU au démarrage
+n_gpus = torch.cuda.device_count()
+if n_gpus > 1:
+    print(f"🚀 Multi-GPU activé : {n_gpus} GPUs seront utilisés pour chaque essai.")
+
 # ========================
 # 2. Fonction Objective (Le cœur d'Optuna)
 # ========================
@@ -87,6 +92,11 @@ def objective(trial):
     )
     
     model = build_model(None, current_cfg)
+    
+    # --- ACTIVATION MULTI-GPU ---
+    if torch.cuda.device_count() > 1:
+        model = torch.nn.DataParallel(model)
+        
     model.to(device)
     
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
