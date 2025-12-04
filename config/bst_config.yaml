@@ -63,7 +63,7 @@ MM_BST_Run:
   net_dropout: 0.2
   
   # ---- Entraînement ----
-  epochs: 100
+  epochs: 300
   optimizer: adamw       # AdamW est souvent meilleur pour Transformer
   weight_decay: 1e-4
   shuffle: True
