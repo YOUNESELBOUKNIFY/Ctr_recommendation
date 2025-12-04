@@ -105,7 +105,7 @@ def objective(trial):
     loss_fn = torch.nn.BCELoss()
 
     # --- D. Training Loop (Short w/ Pruning) ---
-    epochs = 8 # Suffisant pour voir si ça converge bien avec FiBiNET
+    epochs = 30 # Suffisant pour voir si ça converge bien avec FiBiNET
     best_valid_auc = 0.0
 
     for epoch in range(epochs):
