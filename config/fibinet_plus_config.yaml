@@ -42,8 +42,8 @@ MM_FiBiNET_Plus_Run:
   metrics: [AUC, logloss]
 
   # ---- Hyperparamètres ----
-  learning_rate: 0.0004  # LR de base (sera x10 par le scheduler)
-  batch_size: 512
+  learning_rate: 0.0005  # LR de base (sera x10 par le scheduler)
+  batch_size: 1024
   embedding_dim: 128     # Haute précision
   max_len: 20
   
