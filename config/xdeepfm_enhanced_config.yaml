@@ -6,7 +6,7 @@ base_config:
   save_best_only: True
   seed: 2025
 
-base_expid: MM_AutoFiBi_Run
+base_expid: MM_xDeepFM_Enh_Run
 dataset_id: MicroLens_1M_x1
 
 dataset_config:
@@ -26,23 +26,26 @@ dataset_config:
       - {name: item_emb_d128, active: True, dtype: float, type: embedding, source: item}
     label_col: {name: label, dtype: float}
 
-MM_AutoFiBi_Run:
-  model: MM_AutoFiBi
+MM_xDeepFM_Enh_Run:
+  model: MM_xDeepFM_Enhanced
   dataset_id: MicroLens_1M_x1
   loss: binary_crossentropy
   metrics: [AUC, logloss]
 
   # ---- Hyperparamètres ----
-  learning_rate: 0.001   # Base pour scheduler
-  batch_size: 4096
-  embedding_dim: 128     # Performance max
+  learning_rate: 0.001   
+  batch_size: 4096       
+  embedding_dim: 128
   max_len: 20
+  
+  # ---- Architecture Avancée ----
+  cin_layer_units: [256, 128, 64] # 3 couches d'interactions compressées
   
   # ---- Entraînement ----
   epochs: 40
   optimizer: adamw
   weight_decay: 1e-5
-  net_dropout: 0.2
+  net_dropout: 0.3 # Plus élevé car modèle plus gros
   shuffle: True
   monitor: "AUC"
   monitor_mode: "max"

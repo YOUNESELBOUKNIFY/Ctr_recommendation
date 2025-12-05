@@ -8,12 +8,12 @@ import time
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from dataloader import MMCTRDataLoader
-# Import du modèle Auto
-from model_autofibi import build_model
+# Import du modèle amélioré
+from model_xdeepfm_enhanced import build_model
 from utils import set_seed, compute_auc
 
-config_path = "../config/autofibi_config.yaml"
-if not os.path.exists(config_path): config_path = "config/autofibi_config.yaml"
+config_path = "../config/xdeepfm_enhanced_config.yaml"
+if not os.path.exists(config_path): config_path = "config/xdeepfm_enhanced_config.yaml"
 
 with open(config_path, "r") as f: cfg = yaml.safe_load(f)
 dataset_id = cfg["dataset_id"]
@@ -22,7 +22,7 @@ model_cfg = cfg[cfg["base_expid"]]
 
 set_seed(model_cfg.get("seed", 2025))
 device = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"🔥 Training AutoFiBi (Auto-Gating) sur : {device}")
+print(f"🔥 Training xDeepFM Enhanced sur : {device}")
 
 batch_size = int(model_cfg.get("batch_size", 4096))
 max_len = int(model_cfg.get("max_len", 20))
@@ -43,12 +43,13 @@ model = build_model(None, model_cfg)
 if torch.cuda.device_count() > 1: model = torch.nn.DataParallel(model)
 model.to(device)
 
+# Optimiseur avec Scheduler
 lr = float(model_cfg.get("learning_rate", 1e-3))
 epochs = int(model_cfg.get("epochs", 40))
 optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
 loss_fn = torch.nn.BCELoss()
 
-# Pic à 0.01 (Votre valeur optimale)
+# OneCycleLR (Pic 0.01)
 scheduler = torch.optim.lr_scheduler.OneCycleLR(
     optimizer, max_lr=0.01, epochs=epochs, steps_per_epoch=len(train_loader),
     pct_start=0.3, div_factor=25.0, final_div_factor=1000.0
@@ -56,9 +57,9 @@ scheduler = torch.optim.lr_scheduler.OneCycleLR(
 
 best_auc = 0.0
 os.makedirs("../checkpoints", exist_ok=True)
-best_model_path = "../checkpoints/AutoFiBi_best.pth"
+best_model_path = "../checkpoints/xDeepFM_Enh_best.pth"
 
-print(f"\n🚀 Démarrage AutoFiBi...")
+print(f"\n🚀 Démarrage...")
 
 for epoch in range(epochs):
     model.train()
@@ -83,6 +84,7 @@ for epoch in range(epochs):
             sys.stdout.write(f"\rEpoch {epoch+1} | Loss: {loss.item():.4f} | LR: {scheduler.get_last_lr()[0]:.6f}")
             sys.stdout.flush()
 
+    # Valid
     model.eval()
     y_trues, y_preds = [], []
     with torch.no_grad():
