@@ -49,19 +49,19 @@ MM_FiBiNET_Run:
 
   # ---- Hyperparamètres Critiques ----
   learning_rate: 0.001   # Base pour le Scheduler OneCycleLR (max 0.01)
-  batch_size: 8192       # AUGMENTÉ : Stabilise les gradients pour les interactions complexes
+  batch_size: 4096       # Grand batch = matrice bilinéaire plus stable
   embedding_dim: 128     # CRUCIAL : Passer à 128 pour capturer la complexité
   max_len: 20            # Historique
   
   # ---- Optimisations FiBiNET ----
   bilinear_type: "each"  # "each" est beaucoup plus précis que "all"
-  senet_reduction: 1     # OPTIMISÉ : 1 = Aucune compression, attention maximale (plus précis)
+  senet_reduction: 2     # Moins de compression = plus d'intelligence
   
   # ---- Entraînement & Régularisation ----
-  epochs: 45             # Un peu plus long pour converger avec le gros batch size
-  optimizer: adamw       # AdamW gère mieux le weight decay
-  weight_decay: 1e-6     # RÉDUIT : On laisse plus de liberté au modèle
-  net_dropout: 0.2       # RÉDUIT : Moins de suppression d'info
+  epochs: 40             # Un peu plus long pour bien converger
+  optimizer: adamw       # CHANGEMENT ICI : AdamW gère mieux le weight decay
+  weight_decay: 1e-5     # Régularisation légère
+  net_dropout: 0.25      # Dropout modéré
   
   shuffle: True
   monitor: "AUC"
