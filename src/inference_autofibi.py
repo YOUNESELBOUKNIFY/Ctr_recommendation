@@ -12,10 +12,10 @@ from tqdm import tqdm
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from dataloader import ParquetDataset
-from model_graph_fibinet import build_model
+from model_autofibi import build_model
 from utils import set_seed
 
-# Inference Collator
+# Collator
 class InferenceCollator:
     def __init__(self, max_len, column_index, item_info_path):
         self.max_len = max_len
@@ -50,8 +50,8 @@ class InferenceCollator:
         return batch_dict
 
 # Run
-config_path = "../config/graph_fibinet_config.yaml"
-if not os.path.exists(config_path): config_path = "config/graph_fibinet_config.yaml"
+config_path = "../config/autofibi_config.yaml"
+if not os.path.exists(config_path): config_path = "config/autofibi_config.yaml"
 with open(config_path, "r") as f: cfg = yaml.safe_load(f)
 
 dataset_id = cfg["dataset_id"]
@@ -59,11 +59,11 @@ dataset_cfg = cfg["dataset_config"][dataset_id]
 model_cfg = cfg[cfg["base_expid"]]
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-print("Construction Graph-FiBiNET...")
+print("Construction AutoFiBi...")
 model = build_model(None, model_cfg)
 
-checkpoint_path = "../checkpoints/GraphFiBiNET_best.pth"
-if not os.path.exists(checkpoint_path): checkpoint_path = "checkpoints/GraphFiBiNET_best.pth"
+checkpoint_path = "../checkpoints/AutoFiBi_best.pth"
+if not os.path.exists(checkpoint_path): checkpoint_path = "checkpoints/AutoFiBi_best.pth"
 state_dict = torch.load(checkpoint_path, map_location=device)
 new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
 model.load_state_dict(new_state_dict)
@@ -95,7 +95,7 @@ predictions = np.concatenate(all_preds)
 sub = pd.DataFrame()
 sub['ID'] = range(len(predictions))
 sub['Task2'] = predictions
-sub.to_csv("prediction_graph_fibinet.csv", index=False)
-with zipfile.ZipFile("submission_graph_fibinet.zip", 'w', zipfile.ZIP_DEFLATED) as zf:
-    zf.write("prediction_graph_fibinet.csv")
+sub.to_csv("prediction_autofibi.csv", index=False)
+with zipfile.ZipFile("submission_autofibi.zip", 'w', zipfile.ZIP_DEFLATED) as zf:
+    zf.write("prediction_autofibi.csv")
 print("✅ Terminé !")
