@@ -4,8 +4,7 @@ import torch.nn.functional as F
 
 class GraphAttentionLayer(nn.Module):
     """
-    Couche GAT (Graph Attention Network) simplifiée pour les features.
-    Traite chaque champ (Field) comme un nœud dans un graphe complet.
+    Couche GAT (Graph Attention Network) qui traite les features comme un graphe.
     """
     def __init__(self, in_dim, out_dim, dropout, alpha=0.2, heads=2):
         super(GraphAttentionLayer, self).__init__()
@@ -17,11 +16,11 @@ class GraphAttentionLayer(nn.Module):
         
         assert self.head_dim * heads == out_dim, "out_dim doit être divisible par heads"
 
-        # W: Transformation linéaire pour chaque tête
+        # Poids pour la projection linéaire
         self.W = nn.Parameter(torch.zeros(size=(heads, in_dim, self.head_dim)))
         nn.init.xavier_uniform_(self.W.data, gain=1.414)
         
-        # a: Vecteur d'attention pour chaque tête
+        # Poids pour l'attention
         self.a = nn.Parameter(torch.zeros(size=(heads, 2 * self.head_dim, 1)))
         nn.init.xavier_uniform_(self.a.data, gain=1.414)
         
@@ -31,37 +30,31 @@ class GraphAttentionLayer(nn.Module):
         # h: (Batch, Num_Fields, In_Dim)
         batch_size, num_nodes, _ = h.size()
         
-        # 1. Projection Linéaire Multi-têtes
+        # 1. Projection Linéaire
         # (Batch, Nodes, Heads, Head_Dim)
         h_prime = torch.einsum('bni,hio->bnho', h, self.W)
         
         # 2. Préparation Attention (All-to-All)
-        # On construit la matrice (Batch, Heads, Nodes, Nodes, 2*Head_Dim)
-        # pour calculer l'attention e_ij
-        h_prime_i = h_prime.unsqueeze(2).expand(-1, -1, num_nodes, -1, -1) # Source
-        h_prime_j = h_prime.unsqueeze(1).expand(-1, num_nodes, -1, -1, -1) # Target
+        h_prime_i = h_prime.unsqueeze(2).expand(-1, -1, num_nodes, -1, -1)
+        h_prime_j = h_prime.unsqueeze(1).expand(-1, num_nodes, -1, -1, -1)
         
-        # Concaténation features (i || j)
         a_input = torch.cat([h_prime_i, h_prime_j], dim=-1) 
         
-        # 3. Calcul des scores d'attention (e_ij)
-        # (Batch, Nodes, Nodes, Heads, 1) -> (Batch, Heads, Nodes, Nodes)
+        # 3. Scores d'attention
         e = torch.einsum('bnmhd,hdk->bhnm', a_input, self.a).squeeze(-1)
         e = self.leakyrelu(e)
         
-        # 4. Softmax (Normalisation des voisins)
+        # 4. Softmax
         attention = F.softmax(e, dim=-1)
         attention = F.dropout(attention, self.dropout, training=self.training)
         
-        # 5. Agrégation (Message Passing)
-        # (Batch, Heads, Nodes, Nodes) * (Batch, Nodes, Heads, Head_Dim)
-        # h_new = sum(attention_ij * h_j)
+        # 5. Agrégation
         h_new = torch.einsum('bhnm,bmho->bnho', attention, h_prime)
         
-        # 6. Concatenation des têtes
-        h_new = h_new.view(batch_size, num_nodes, self.out_dim)
+        # 6. Concatenation (CORRECTION ICI : .reshape au lieu de .view)
+        h_new = h_new.reshape(batch_size, num_nodes, self.out_dim)
         
-        # Connexion Résiduelle + ELU (Standard GNN)
+        # Résiduel
         return F.elu(h_new + h) if self.in_dim == self.out_dim else F.elu(h_new)
 
 class SENetLayer(nn.Module):
@@ -105,31 +98,29 @@ class MM_Graph_FiBiNET(nn.Module):
         self.emb_dim = model_cfg.get("embedding_dim", 128)
         mm_input_dim = 128
         
-        # --- Embeddings ---
+        # Embeddings
         self.item_emb = nn.Embedding(91718, self.emb_dim, padding_idx=0)
         self.cate_emb = nn.Embedding(11, self.emb_dim)
         self.user_emb = nn.Embedding(20000, self.emb_dim) # Placeholder
         
+        # Projection MM
         self.mm_proj = nn.Sequential(
             nn.Linear(mm_input_dim, self.emb_dim),
             nn.LayerNorm(self.emb_dim),
             nn.GELU()
         )
         
-        self.num_fields = 6 # [User, Like, View, Item_ID, Item_Image, Hist]
+        self.num_fields = 6 
         
-        # --- GRAPH LAYER (GAT) ---
-        # Transforme les features brutes en features "sociales" (contextualisées par le graphe)
+        # --- GRAPH LAYER ---
         self.gnn = GraphAttentionLayer(self.emb_dim, self.emb_dim, dropout=0.1, heads=4)
         
-        # --- FiBiNET Core ---
+        # --- FiBiNET ---
         self.senet = SENetLayer(self.num_fields, reduction_ratio=2)
         self.bilinear = BilinearInteraction(self.emb_dim, self.num_fields, bilinear_type="each")
         
         # --- MLP ---
         num_pairs = (self.num_fields * (self.num_fields - 1)) // 2
-        
-        # On concatène (Features GNN) + (Features Bilinéaires)
         total_input_dim = (self.num_fields * self.emb_dim) + (num_pairs * self.emb_dim)
         
         self.mlp = nn.Sequential(
@@ -146,7 +137,7 @@ class MM_Graph_FiBiNET(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, batch_dict):
-        # 1. Inputs
+        # Inputs
         item_id = batch_dict['item_id'].long()
         item_mm = batch_dict['item_emb_d128'].float()
         likes = batch_dict['likes_level'].long()
@@ -155,7 +146,7 @@ class MM_Graph_FiBiNET(nn.Module):
         
         batch_size = item_id.size(0)
         
-        # 2. Features
+        # Features
         user_feat = torch.zeros((batch_size, self.emb_dim), device=item_id.device)
         like_feat = self.cate_emb(likes)
         view_feat = self.cate_emb(views)
@@ -167,33 +158,31 @@ class MM_Graph_FiBiNET(nn.Module):
             mask = (hist_ids == 0)
             seq_emb = seq_emb.masked_fill(mask.unsqueeze(-1), 0)
             seq_sum = torch.sum(seq_emb, dim=1)
+            # Protection div/0
             seq_count = torch.sum((~mask).float(), dim=1, keepdim=True).clamp(min=1)
             hist_feat = seq_sum / seq_count
         else:
             hist_feat = torch.zeros_like(item_id_feat)
 
-        # 3. Stack des Features (Nodes du Graphe)
-        # (Batch, 6, Emb)
+        # Stack Features
         raw_features = torch.stack([
             user_feat, like_feat, view_feat, item_id_feat, item_img_feat, hist_feat
         ], dim=1)
         
-        # 4. GNN Layer (Feature Refinement)
-        # Les features discutent entre elles : "L'image ressemble à l'historique ?"
+        # 1. GNN : Enrichissement contextuel
         gnn_features = self.gnn(raw_features)
         
-        # 5. FiBiNET sur les features raffinées
+        # 2. FiBiNET : Interactions explicites
         senet_output = self.senet(gnn_features)
         bilinear_output = self.bilinear(senet_output)
         
-        # 6. Fusion
+        # 3. Fusion
         c_input = torch.cat([
-            gnn_features.view(batch_size, -1),   # Features après GNN
-            bilinear_output.view(batch_size, -1) # Interactions explicites
+            gnn_features.view(batch_size, -1),
+            bilinear_output.view(batch_size, -1)
         ], dim=1)
         
-        logits = self.mlp(c_input)
-        return self.sigmoid(logits).squeeze(-1)
+        return self.sigmoid(self.mlp(c_input)).squeeze(-1)
 
 def build_model(feature_map, model_cfg):
     return MM_Graph_FiBiNET(feature_map, model_cfg)
