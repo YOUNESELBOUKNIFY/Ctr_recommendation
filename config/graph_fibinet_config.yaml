@@ -1,0 +1,51 @@
+base_config:
+  model_root: './checkpoints/'
+  logs_root: './logs/'
+  num_workers: 4
+  verbose: 1
+  save_best_only: True
+  seed: 2025
+
+base_expid: MM_Graph_FiBiNET_Run
+dataset_id: MicroLens_1M_x1
+
+dataset_config:
+  MicroLens_1M_x1:
+    data_root: ../data/MicroLens_1M_x1/
+    data_format: parquet
+    train_data: ../data/MicroLens_1M_x1/train.parquet
+    valid_data: ../data/MicroLens_1M_x1/valid.parquet
+    test_data: ../data/MicroLens_1M_x1/test.parquet
+    item_info: ../data/MicroLens_1M_x1/item_info.parquet
+    feature_cols:
+      - {name: user_id, active: True, dtype: int, type: meta}
+      - {name: item_seq, active: True, dtype: int, type: meta}
+      - {name: likes_level, active: True, dtype: int, type: categorical, vocab_size: 11}
+      - {name: views_level, active: True, dtype: int, type: categorical, vocab_size: 11}
+      - {name: item_id, active: True, dtype: int, type: categorical, vocab_size: 91718, source: item}
+      - {name: item_emb_d128, active: True, dtype: float, type: embedding, source: item}
+    label_col: {name: label, dtype: float}
+
+MM_Graph_FiBiNET_Run:
+  model: MM_Graph_FiBiNET
+  dataset_id: MicroLens_1M_x1
+  loss: binary_crossentropy
+  metrics: [AUC, logloss]
+
+  # ---- Hyperparamètres ----
+  learning_rate: 0.0005  # GAT demande un LR un peu plus doux
+  batch_size: 4096
+  embedding_dim: 128     # Requis pour GNN performant
+  max_len: 20
+  
+  # ---- Optimisations ----
+  bilinear_type: "each"
+  
+  # ---- Entraînement ----
+  epochs: 40
+  optimizer: adamw
+  weight_decay: 1e-5
+  net_dropout: 0.2
+  shuffle: True
+  monitor: "AUC"
+  monitor_mode: "max"
