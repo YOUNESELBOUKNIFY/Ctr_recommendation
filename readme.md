@@ -1,9 +1,9 @@
-Solution MMCTR Track 2 : Architecture xDeepFM Enhanced
+## Solution MMCTR Track 2 : Architecture xDeepFM Enhanced
 
 Ce dépôt contient la solution basée sur le modèle xDeepFM (eXtreme Deep Factorization Machine), amélioré pour le challenge Multimodal.
 Ce modèle combine la puissance des interactions explicites (CIN) avec un mécanisme d'Attention pour l'historique utilisateur.
 
-📌 Architecture du Modèle
+## Architecture du Modèle
 
 Le modèle prend en entrée des données hétérogènes (Sparse IDs, Dense Embeddings, Séquences) et produit une probabilité de clic (CTR).
 
@@ -87,7 +87,7 @@ graph TD
     style Attn_Hist fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
 
 
-🧠 Composants Clés
+## Composants Clés
 
 1. Entrées Multimodales (Image)
 
@@ -113,7 +113,7 @@ CIN (Compressed Interaction Network) : Interactions explicites d'ordre élevé. 
 
 DNN : Généralisation via un réseau profond. Configuration : [512 -> 256 -> 1].
 
-⚙️ Configuration Optimisée
+## Configuration Optimisée
 
 Le fichier xdeepfm_config.yaml utilise les hyperparamètres suivants pour la performance :
 
@@ -153,7 +153,7 @@ Dropout
 
 Prévient le sur-apprentissage dans le DNN.
 
-🚀 Instructions d'Entraînement
+## Instructions d'Entraînement
 
 1. Installation
 
