@@ -1,5 +1,5 @@
 # ========================
-# Base configuration
+# Fibnet configuration
 # ========================
 base_config:
   model_root: './checkpoints/'
