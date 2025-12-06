@@ -1,177 +1,166 @@
-## Solution MMCTR Track 2 : Architecture xDeepFM Enhanced
 
-Ce dépôt contient la solution basée sur le modèle xDeepFM (eXtreme Deep Factorization Machine), amélioré pour le challenge Multimodal.
-Ce modèle combine la puissance des interactions explicites (CIN) avec un mécanisme d'Attention pour l'historique utilisateur.
+#  MMCTR 2025 — Solution Track 2  
+## xDeepFM Enhanced Model (Multimodal CTR Prediction)
 
-## Architecture du Modèle
+Ce dépôt contient une version améliorée du modèle **xDeepFM**, optimisée pour la compétition **MMCTR 2025 – Track 2 (Multimodal CTR Prediction)**.  
+L'objectif est de prédire la probabilité de clic (CTR) en exploitant des données multimodales : IDs sparses, embeddings d’images, et historiques séquentiels.
 
-Le modèle prend en entrée des données hétérogènes (Sparse IDs, Dense Embeddings, Séquences) et produit une probabilité de clic (CTR).
+Le modèle combine :
 
-Schéma des Entrées/Sorties
+-  **CIN** pour les interactions explicites d'ordre élevé  
+-  **DNN** pour les interactions implicites  
+-  **Attention pooling** pour l’historique utilisateur  
+-  **Projection multimodale** pour les embeddings d’images  
 
-graph TD
-    %% -- INPUTS --
-    subgraph "1. Entrées (Inputs)"
-        UserID[User Placeholder]
-        Context[Contexte<br/>(Likes/Views)]
-        ItemID[Item ID]
-        ItemImg[Item Image<br/>(128d Float)]
-        History[Historique Séquentiel<br/>(Liste d'IDs)]
-    end
+---
 
-    %% -- EMBEDDING & PROJECTION --
-    subgraph "2. Embedding & Projection Layer"
-        Emb_User[User Emb]
-        Emb_Ctx[Context Emb]
-        Emb_Item[Item Emb]
-        
-        Proj_Img[<b>Projection Multimodale</b><br/>Linear + LayerNorm + DICE]
-        
-        Attn_Hist[<b>Attention Pooling</b><br/>(Target-Aware)]
-    end
+#  1. Présentation Générale
 
-    %% CONNEXIONS COUCHE 2
-    UserID --> Emb_User
-    Context --> Emb_Ctx
-    ItemID --> Emb_Item
-    ItemImg --> Proj_Img
-    
-    %% Target pour Attention
-    Emb_Item -.-> TargetComb
-    Proj_Img -.-> TargetComb
-    TargetComb[Target: ID + Image] -.-> Attn_Hist
-    History --> Attn_Hist
+xDeepFM Enhanced intègre plusieurs améliorations essentielles pour exploiter pleinement les données multimodales :
 
-    %% -- FEATURE STACK --
-    Stack[<b>Stacked Features</b><br/>(Batch, 6 Champs, 128d)]
-    Emb_User --> Stack
-    Emb_Ctx --> Stack
-    Emb_Item --> Stack
-    Proj_Img --> Stack
-    Attn_Hist --> Stack
+- **Projection des images (128d)** dans l’espace latent des IDs  
+- **Attention Target-Aware** (inspiré de DIN) pour pondérer l’historique utilisateur  
+- **CIN** configuré pour capturer les interactions visuelles + contextuelles  
+- **DNN profond** pour identifier des relations non-linéaires complexes  
+- **Fusion de toutes les branches Wide + CIN + Deep**
 
-    %% -- xDeepFM CORE --
-    subgraph "3. xDeepFM Core (3 Branches)"
-        direction TB
-        
-        %% Branche 1 : Linear
-        Linear[<b>Linear Component</b><br/>(1st Order)<br/>Capture les biais globaux]
-        
-        %% Branche 2 : CIN
-        CIN[<b>CIN (Compressed Interaction Network)</b><br/>(Explicit High-Order)<br/>Capture les interactions vectorielles]
-        
-        %% Branche 3 : DNN
-        DNN[<b>DNN (Deep Neural Network)</b><br/>(Implicit High-Order)<br/>Capture les relations non-linéaires]
-        
-        Stack --> Linear
-        Stack --> CIN
-        Stack --> DNN
-    end
+Il s’agit d’une architecture hybride performante et adaptée aux données complexes du challenge.
 
-    %% -- OUTPUT --
-    subgraph "4. Sortie"
-        Sum((Somme))
-        Sigmoid{Sigmoid}
-        Output[<b>Score CTR</b><br/>Probabilité [0-1]]
-        
-        Linear --> Sum
-        CIN --> Sum
-        DNN --> Sum
-        Sum --> Sigmoid --> Output
-    end
+---
 
-    style ItemImg fill:#ffe0b2,stroke:#e65100,stroke-width:2px
-    style Proj_Img fill:#fff3e0,stroke:#e65100
-    style CIN fill:#e1f5fe,stroke:#01579b,stroke-width:2px
-    style DNN fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px
-    style Attn_Hist fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+#  2. Architecture du Modèle
 
+## 🔹 2.1 Entrées
+Le modèle traite plusieurs types de données :
 
-## Composants Clés
+- **User ID**  
+- **Item ID**  
+- **Context ID** (likes, vues, device, etc.)  
+- **Image vector (128d)**  
+- **Historique utilisateur (séquence d’items)**  
 
-1. Entrées Multimodales (Image)
+Toutes les features sont transformées en embeddings 128d.
 
-Le vecteur image (128d) ne passe pas par une table d'embedding classique. Il traverse un module de projection :
-Linear(128->128) ➔ LayerNorm ➔ DICE Activation.
-Cela permet d'aligner l'espace sémantique de l'image avec celui des IDs.
+## 🔹 2.2 Projection Multimodale (Images)
 
-2. Attention Pooling (Amélioration)
+Les images ne sont pas directement utilisées comme embeddings ID.  
+Elles passent par :
+```
+Linear(128 → 128)
+LayerNorm
+DICE Activation
+```
+ Objectif : faire correspondre l’espace visuel et l’espace des IDs.
 
-Contrairement au xDeepFM standard qui fait une moyenne de l'historique, nous utilisons un mécanisme d'attention (inspiré de DIN).
+##  2.3 Attention Pooling (Historique)
+L’historique est traité par une attention dépendante de l'item cible :
+- **Query** : (Embedding Item + Embedding Image projetée)  
+- **Keys/Values** : embeddings des items historiques  
+Résultat : un embedding pondéré qui capture les interactions séquentielles pertinentes.
+##  2.4 Stacked Features
+Tous les embeddings sont concaténés dans une matrice de taille :
 
-Query : L'item cible (ID + Image).
+```
+(batch_size, num_fields, 128)
+```
+##  2.5 xDeepFM Core
 
-Key/Value : Les items de l'historique.
+###  Wide (Linear Component)  
+Capture les effets de premier ordre.
 
-Résultat : L'historique est pondéré dynamiquement selon la pertinence avec la cible.
+###  CIN — Compressed Interaction Network  
+Capture les interactions explicites d'ordre élevé.  
+Configuration :
+```
+CIN Layers = [256, 128]
+```
+###  DNN — Deep Neural Network  
+Capture les interactions implicites complexes.  
+Architecture :
+```
+[512 → 256 → 1]
 
-3. Les 3 Branches de Prédiction
+```
+##  2.6 Sortie
 
-Linear : Mémorisation simple des caractéristiques ("Wide").
+Les trois branches Wide + CIN + Deep sont sommées, puis passent dans :
 
-CIN (Compressed Interaction Network) : Interactions explicites d'ordre élevé. Configuration : [256, 128].
+```
+Sigmoid → CTR
 
-DNN : Généralisation via un réseau profond. Configuration : [512 -> 256 -> 1].
+```
+---
 
-## Configuration Optimisée
+#  3. Configuration & Hyperparamètres
 
-Le fichier xdeepfm_config.yaml utilise les hyperparamètres suivants pour la performance :
+Tous les paramètres sont définis dans **xdeepfm_config.yaml**.
 
-Paramètre
+### Paramètres principaux :
 
-Valeur
+| Paramètre            | Valeur        | Rôle |
+|----------------------|---------------|------|
+| Embedding Dim        | 128           | Crucial pour CIN |
+| CIN Layers           | [256, 128]    | Interactions d'ordre 2 et 3 |
+| Batch Size           | 4096          | Stable en apprentissage |
+| Optimizer            | AdamW         | Meilleure régularisation |
+| Weight Decay         | 1e-5          | Anti-overfitting |
+| Dropout (DNN)        | 0.25          | Régularisation du Deep |
 
-Description
+---
 
-Embedding Dim
+#  4. Entraînement
 
-128
-
-Haute résolution, crucial pour le CIN.
-
-CIN Layers
-
-[256, 128]
-
-Capture des interactions d'ordre 2 et 3.
-
-Batch Size
-
-4096
-
-Stabilise l'apprentissage.
-
-Optimiseur
-
-AdamW
-
-Meilleure gestion du Weight Decay (1e-5).
-
-Dropout
-
-0.25
-
-Prévient le sur-apprentissage dans le DNN.
-
-## Instructions d'Entraînement
-
-1. Installation
-
+## 4.1 Installation
+```bash
 pip install torch pandas numpy pyarrow pyyaml tqdm scikit-learn
-
-
-2. Lancer l'entraînement
-
+````
+---
+## 4.2 Lancer l’entraînement
+```bash
 python src/train_xdeepfm.py
-
-
-Le modèle sera sauvegardé dans checkpoints/xDeepFM_best.pth.
-
-3. Générer la Soumission
-
+```
+Le modèle sera sauvegardé automatiquement dans :
+```
+checkpoints/xDeepFM_best.pth
+```
+---
+#  5. Inference & Génération de Soumission
+Lancer le script d’inférence :
+```bash
 python src/inference_xdeepfm.py
+```
+Il génère automatiquement :
+```
+submission_xdeepfm.zip
+```
+Ce fichier est **prêt à être uploadé** sur le leaderboard MMCTR.
+
+---
+
+#  7. Points Forts de la Solution
+
+*  Très bonne gestion des données multimodales
+*  Fusion cohérente images + IDs
+*  Attention dynamique pour l'historique
+*  CIN puissant pour interactions complexes
+*  Architecture modulaire et claire
+*  Code propre et facile à étendre
+
+---
+
+#  8. Licence
+
+Projet développé dans le cadre de la compétition **MMCTR 2025**.
+Libre d’utilisation pour usage académique et expérimental.
+---
+#  9. Contributions
+Les contributions, issues ou PR sont les bienvenues.
+---
+#  Contac 
+Pour toute question :
+**Younes — MMCTR 2025 Participant**
+```
 
 
-Cela générera le fichier submission_xdeepfm.zip prêt pour le leaderboard.
 
-Développé pour la compétition MMCTR 2025.
+
