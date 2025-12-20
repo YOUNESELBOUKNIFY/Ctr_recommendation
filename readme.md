@@ -41,6 +41,8 @@ Les features tabulaires seules ne suffisent pas toujours : on améliore la quali
 ├─ src/
 │  ├─ train_fibinet.py
 │  ├─ prediction.py
+│  ├─ dataloader.py
+│  ├─ model_fibinet.py
 │  └─ utils/
 ├─ checkpoints/
 └─ README.md
