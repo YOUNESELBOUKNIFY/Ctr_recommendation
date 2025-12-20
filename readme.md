@@ -20,7 +20,7 @@ Les features tabulaires seules ne suffisent pas toujours : on améliore la quali
 
 ## Architecture (pipeline)
 
-![pipeline](image\CTR_precess.png)
+![pipeline](image/CTR_precess.png)
 
 ---
 ## Structure du projet
