@@ -20,9 +20,8 @@ Les features tabulaires seules ne suffisent pas toujours : on améliore la quali
 
 ## Architecture (pipeline)
 
-[pipeline](https://github.com/YOUNESELBOUKNIFY/Ctr_recommendation/blob/main/image/CTR_precess.png)
+![pipeline](image\CTR_precess.png)
 ---
-
 ## Structure du projet
 
 > Exemple de structure (adapte selon ton repo)
