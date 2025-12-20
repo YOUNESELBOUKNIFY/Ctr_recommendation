@@ -3,7 +3,7 @@ import copy
 import yaml
 
 BASE_YAML = "../config/fibinet_config.yaml"   # adapte si besoin
-OUT_DIR = "configs_ensemble"
+OUT_DIR = "../configs_ensemble"
 
 def deep_update(d, u):
     for k, v in u.items():
