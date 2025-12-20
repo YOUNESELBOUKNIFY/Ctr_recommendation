@@ -21,10 +21,9 @@ Les features tabulaires seules ne suffisent pas toujours : on améliore la quali
 ## Architecture (pipeline)
 
 ![pipeline](image\CTR_precess.png)
+
 ---
 ## Structure du projet
-
-> Exemple de structure (adapte selon ton repo)
 
 ```bash
 .
@@ -49,7 +48,6 @@ Les features tabulaires seules ne suffisent pas toujours : on améliore la quali
 
 ---
 
-## Installation
 
 
 ### Kaggle
@@ -119,7 +117,6 @@ python src/prediction.py \
 zip -r submission.zip /kaggle/working/submission.csv
 ```
 
-> Vérifie que `submission.csv` respecte **exactement** le format demandé par Codabench (colonnes, ordre, types).
 
 ---
 
@@ -136,12 +133,7 @@ zip -r submission.zip /kaggle/working/submission.csv
 
 ---
 
-## Troubleshooting (erreurs fréquentes)
 
-* **Chemins Kaggle** : remplace tous les chemins locaux par `/kaggle/input/...` et `/kaggle/working/...`
-* **Parquet** : installe `pyarrow` si besoin
-* **Shape mismatch** : vérifie que `item_emb_d128` est bien **128-d** pour tous les items
-* **Items manquants** : si un item du train n’a pas d’embedding, prévoir un embedding par défaut (zéro ou moyenne)
 
 ---
 
@@ -151,7 +143,4 @@ zip -r submission.zip /kaggle/working/submission.csv
 * FiBiNET: Field-wise Bi-Interaction Network for CTR Prediction
 * MicroLens dataset (format & description)
 
-```
 
-Si tu me colles **l’arborescence exacte** de ton repo (un `tree -L 2`) + les **noms réels** de tes scripts (`task1`, `train`, `predict`), je te le réécris en README **100% aligné** à tes fichiers/commandes.
-```
