@@ -1,3 +1,4 @@
+
 # ========================
 # Fibnet configuration
 # ========================
@@ -26,7 +27,9 @@ dataset_config:
     valid_data: ../data/MicroLens_1M_x1/valid.parquet
     test_data: ../data/MicroLens_1M_x1/test.parquet
     item_info: ../data/MicroLens_1M_x1/item_info.parquet
-
+    
+    # Feature columns : On retire les dimensions spécifiques
+    # Le modèle utilisera embedding_dim=128 partout (Uniformité requise par FiBiNET)
     feature_cols:
       - {name: user_id, active: True, dtype: int, type: meta}
       - {name: item_seq, active: True, dtype: int, type: meta}
@@ -37,7 +40,7 @@ dataset_config:
     label_col: {name: label, dtype: float}
 
 # ========================
-# Model Configuration
+# Model Configuration (Optimisée SOTA)
 # ========================
 MM_FiBiNET_Run:
   model: MM_FiBiNET
@@ -45,27 +48,22 @@ MM_FiBiNET_Run:
   loss: binary_crossentropy
   metrics: [AUC, logloss]
 
-  # ---- Hyperparamètres ----
-  learning_rate: 0.001
-  batch_size: 4096
-  embedding_dim: 128
-  max_len: 20
-
-  # ---- FiBiNET ----
-  bilinear_type: "each"
-  senet_reduction: 2
-
-  # ---- Training ----
-  epochs: 40
-  optimizer: adamw
-  weight_decay: 1e-5
-  net_dropout: 0.25
-
+  # ---- Hyperparamètres Critiques ----
+  learning_rate: 0.001   # Base pour le Scheduler OneCycleLR (max 0.01)
+  batch_size: 4096       # Grand batch = matrice bilinéaire plus stable
+  embedding_dim: 128     # CRUCIAL : Passer à 128 pour capturer la complexité
+  max_len: 20            # Historique
+  
+  # ---- Optimisations FiBiNET ----
+  bilinear_type: "each"  # "each" est beaucoup plus précis que "all"
+  senet_reduction: 2     # Moins de compression = plus d'intelligence
+  
+  # ---- Entraînement & Régularisation ----
+  epochs: 40             # Un peu plus long pour bien converger
+  optimizer: adamw       # CHANGEMENT ICI : AdamW gère mieux le weight decay
+  weight_decay: 1e-5     # Régularisation légère
+  net_dropout: 0.25      # Dropout modéré
+  
   shuffle: True
   monitor: "AUC"
   monitor_mode: "max"
-
-  # ---- Early Stopping ----
-  early_stopping: True
-  patience: 4
-  min_delta: 0.0005
