@@ -68,36 +68,25 @@ Objectif : produire un fichier **`item_info_updated.parquet`** (ou remplacer `it
 
 * `item_emb_d128` : liste de **128 floats** par item (embedding multimodal)
 
-Exemple :
 
-```bash
-python src/task1_build_item_embedding.py \
-  --item_info /kaggle/input/.../item_info.parquet \
-  --output    /kaggle/working/item_info_updated.parquet \
-  --emb_dim   128
-```
-
-✅ Sortie attendue : un parquet avec **la même structure** + une colonne `item_emb_d128` (ou une colonne existante mise à jour).
+✅ Sortie attendue : un parquet avec **la même structure** + une colonne `item_emb_d128`  mise à jour.
 
 ---
 
 ### 2) Task 2 — Entraîner FiBiNET
 
-Assure-toi que ton `config` pointe vers le bon `item_info` :
-
 * `train_data`: `train.parquet`
 * `valid_data`: `valid.parquet`
 * `test_data` : `test.parquet`
-* `item_info`: `item_info_updated.parquet` (ou le `item_info.parquet` remplacé)
+* `item_info`: `item_info_updated.parquet` 
 
 ```bash
-python src/train_fibinet.py --config configs/fibinet_config.yaml
+python src/train_fibinet.py 
 ```
 
 ✅ Sorties :
 
 * `checkpoints/` : meilleur modèle (best checkpoint)
-* `logs/` : logs d’entraînement (loss/AUC, etc.)
 
 ---
 
@@ -105,12 +94,8 @@ python src/train_fibinet.py --config configs/fibinet_config.yaml
 
 ### 1) Générer les prédictions sur `test.parquet`
 
-```bash
+```bashe
 python src/prediction.py \
-  --config configs/fibinet_config.yaml \
-  --checkpoint checkpoints/best.ckpt \
-  --test data/MicroLens_1M_x1/test.parquet \
-  --out /kaggle/working/submission.csv
 ```
 
 ### 2) Créer le zip de soumission
